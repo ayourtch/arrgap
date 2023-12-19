@@ -15,10 +15,10 @@ void set_winsize(int slave_fd, int rows, int cols) {
     struct winsize ws;
 
     // Set desired rows and columns
-    ws.ws_row = rows; // Number of rows
-    ws.ws_col = cols; // Number of columns
-    ws.ws_xpixel = 0; // Pixel width of entire terminal
-    ws.ws_ypixel = 0; // Pixel height of entire terminal
+    ws.ws_row = rows;   // Number of rows
+    ws.ws_col = cols;   // Number of columns
+    ws.ws_xpixel = 0;   // Pixel width of entire terminal
+    ws.ws_ypixel = 0;   // Pixel height of entire terminal
     if (ioctl(slave_fd, TIOCSWINSZ, &ws) < 0) {
         perror("ioctl TIOCSWINSZ");
         return;
@@ -35,12 +35,10 @@ void sigwinch_handler(int signum) {
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) != -1) {
         // Set the size of the child pty
         // ioctl(master_fd_global, TIOCSWINSZ, &ws);
-        snprintf(buf, sizeof(buf)-1, "\001\033]7777;r=%d,c=%d\002", ws.ws_row, ws.ws_col);
+        snprintf(buf, sizeof(buf) - 1, "\033]7777;r=%d,c=%d\033\\", ws.ws_row, ws.ws_col);
         write(master_fd_global, buf, strlen(buf));
-        
     }
 }
-
 
 int main() {
     int master_fd, slave_fd;
@@ -50,6 +48,7 @@ int main() {
     char data_buffer[BUF_SIZE];
     char data_buffer_i = 0;
     char in_cmd_state = 0;
+    char starting_escape = 0;
     char buffer[BUF_SIZE];
     char slave_name[BUF_SIZE];
     int nread;
@@ -57,7 +56,6 @@ int main() {
     // Open a new pseudo-terminal
     master_fd = posix_openpt(O_RDWR | O_NOCTTY);
     master_fd_global = master_fd;
-
 
     if (master_fd < 0) {
         perror("posix_openpt");
@@ -68,7 +66,7 @@ int main() {
         return 1;
     }
     printf("master fd: %d\n", master_fd);
-    ptsname_r(master_fd, slave_name, sizeof(slave_name)-1);
+    ptsname_r(master_fd, slave_name, sizeof(slave_name) - 1);
     printf("ptsname: %s\n", slave_name);
 
     // Fork the process
@@ -78,7 +76,7 @@ int main() {
         return 1;
     }
 
-    if (pid == 0) { // Child Process
+    if (pid == 0) {     // Child Process
         setsid();
         // Open the slave side of the pty
         slave_fd = open(slave_name, O_RDWR);
@@ -86,7 +84,6 @@ int main() {
             perror("open slave pty");
             return 1;
         }
-
         // Redirect stdin, stdout, stderr to the pty
         dup2(slave_fd, STDIN_FILENO);
         dup2(slave_fd, STDOUT_FILENO);
@@ -96,7 +93,7 @@ int main() {
         execlp("/bin/sh", "/bin/sh", (char *) NULL);
         perror("execlp");
         return 1;
-    } else { // Parent Process
+    } else {    // Parent Process
         fd_set read_fds;
         struct termios orig_termios, new_termios;
 
@@ -108,7 +105,6 @@ int main() {
             printf("MASTER!\n");
             sigaction(SIGWINCH, &sa, NULL);
         }
-
         // Save original terminal attributes and set to raw mode
         tcgetattr(STDIN_FILENO, &orig_termios);
         new_termios = orig_termios;
@@ -134,35 +130,56 @@ int main() {
                 if (nread > 0) {
                     int i;
                     data_buffer_i = 0;
-                    for(i=0; i<nread; i++) {
-                       if (in_cmd_state) {
-                          if (buffer[i] == 2) {
-                             int r = -1;
-                             int c = -1;
-                             cmd_buffer[cmd_buffer_i++] = 2;
-                             cmd_buffer[cmd_buffer_i++] = 0;
-                             int n = sscanf(cmd_buffer, "\001\033]7777;r=%d,c=%d\002", &r, &c);
-                             // printf("DETECTED IN: %d %d!\n", r, c);
-                             // printf("CMD buffer: '%s'\n", cmd_buffer);
-                             if (r >= 0 && c >= 0) {
-                                 set_winsize(master_fd, r, c);
-                             }
-                             in_cmd_state = 0;
-                          } else {
-                             cmd_buffer[cmd_buffer_i++] = buffer[i];
-                          }
-                       } else {
-                         if (buffer[i] == 1) {
-                             cmd_buffer[0] = buffer[i];
-                             in_cmd_state = 1;
-                             cmd_buffer_i = 1;
-                         } else {
-                             data_buffer[data_buffer_i++] = buffer[i];
-                         }
-                       }
+                    for (i = 0; i < nread; i++) {
+                        if (in_cmd_state) {
+                            if (starting_escape) {
+                                starting_escape = 0;
+                                if (buffer[i] == ']') {
+                                    cmd_buffer[cmd_buffer_i++] = ']';
+                                } else {
+                                    in_cmd_state = 0;
+                                    data_buffer[data_buffer_i++] = 27;
+                                    data_buffer[data_buffer_i++] = buffer[i];
+                                }
+                            } else {
+                                if (buffer[i] == '\\') {
+                                    int r = -1;
+                                    int c = -1;
+                                    cmd_buffer[cmd_buffer_i++] = buffer[i];
+                                    cmd_buffer[cmd_buffer_i++] = 0;
+                                    int n = sscanf(cmd_buffer, "\033]7777;r=%d,c=%d\033\\", &r, &c);
+                                    // printf("DETECTED IN: %d %d!\n", r, c);
+                                    // printf("CMD buffer: '%s'\n", cmd_buffer);
+                                    if (r >= 0 && c >= 0) {
+                                        set_winsize(master_fd, r, c);
+                                    } else {
+                                        if (data_buffer_i > 0) {
+                                            write(master_fd, data_buffer, data_buffer_i);
+                                            data_buffer_i = 0;
+                                        }
+                                        if (cmd_buffer_i > 0) {
+                                            write(master_fd, cmd_buffer, cmd_buffer_i);
+                                            cmd_buffer_i = 0;
+                                        }
+                                    }
+                                    in_cmd_state = 0;
+                                } else {
+                                    cmd_buffer[cmd_buffer_i++] = buffer[i];
+                                }
+                            }
+                        } else {
+                            if (buffer[i] == 27) {      /* escape */
+                                cmd_buffer[0] = buffer[i];
+                                in_cmd_state = 1;
+                                cmd_buffer_i = 1;
+                                starting_escape = 1;
+                            } else {
+                                data_buffer[data_buffer_i++] = buffer[i];
+                            }
+                        }
                     }
                     if (data_buffer_i > 0) {
-                       write(master_fd, data_buffer, data_buffer_i);
+                        write(master_fd, data_buffer, data_buffer_i);
                     }
                 }
             }
@@ -177,11 +194,9 @@ int main() {
                 }
             }
         }
-
         // Restore original terminal attributes
         tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
     }
 
     return 0;
 }
-
