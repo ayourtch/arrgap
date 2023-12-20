@@ -101,8 +101,8 @@ int main() {
         sa.sa_handler = sigwinch_handler;
         sa.sa_flags = SA_RESTART;
         sigemptyset(&sa.sa_mask);
-        if (getenv("AIRGAP_MASTER")) {
-            printf("MASTER!\n");
+        if (getenv("ARRGAP_LOCAL")) {
+            printf("ARRGAP LOCAL!\n");
             sigaction(SIGWINCH, &sa, NULL);
         }
         // Save original terminal attributes and set to raw mode

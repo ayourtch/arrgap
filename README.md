@@ -19,7 +19,7 @@ very corrupt.
 Quite obviously - because SIGWINCH, which is sent to your local terminal
 when you resize the window, is not sent over the serial interface.
 This small program is there to take care of that: first, on your main/secured
-host launch "AIRGAP_MASTER=y ./arrgap". This will give you a shell.
+host launch "ARRGAP_LOCAL=y ./arrgap". This will give you a shell.
 
 In this shell, connect to the serial port, raspberry pi, etc. On the raspberry
 pi, start ./arrgap - this will give you another shell. If you now start a
